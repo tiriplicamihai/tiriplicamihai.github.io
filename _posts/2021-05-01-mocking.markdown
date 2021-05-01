@@ -1,0 +1,77 @@
+---
+layout: post
+title:  "Mocking"
+date:   2021-05-01 11:50:00 +0200
+categories:
+---
+
+Testing is probably the most important part of the project and more often than not it takes more time to test a software component than to write it (mostly because you have to fix the bugs). I recently change jobs from a company with a strong testing culture to another one with arguably stronger testing culture but with different strategy when it comes to writing, running and maintaining tests. This made think a bit about testing in general and, since this is already well covered in the literature, I thought about sharing my thoughts on types of **mocking** which is crucial in a world dominated by microservices. So here it comes.
+
+## Monkey patching
+
+This was my first contact with mocking when I started my career with Python. Monkey patching is basically the general name for methods where attributes can be changed at runtime. This works great in dynamic languages where it's very easy to change things at runtime (eg. Python or Ruby).
+
+A Python example is the [mock](https://docs.python.org/3/library/unittest.mock-examples.html) library:
+
+```python
+class ProductionClass:
+    def method(self):
+        self.something(1, 2, 3)
+    def something(self, a, b, c):
+        pass
+
+real = ProductionClass()
+real.something = MagicMock()
+real.method()
+real.something.assert_called_once_with(1, 2, 3)
+```
+
+You can see that the `something` method is replaced with a mock and the library is nice enough to come with helper methods for testing.
+
+What's great about this method - it's super easy to mock things and you don't have to change your code to improve testability.
+
+The bad news is that this is not always what we want. Because it's easy to mock things people are tempted to mock a lot of things and because we don't think about code organisation there will be a price to pay when refactoring. I think the most violated coding principle with monkey patching is the "dependency inversion principle" because there is no way to enforce it. Coming back to refactoring, monkey patching tightly couples your tests to your code - if you change your code, more often than not, you will have to change your tests which is not great.
+
+All of the above can be avoided if people pay attention to good practices but, at least for me as a junior development, it was too easy to make mistakes and write less maintainable code in the beginning of my career.
+
+## Dependency injection
+
+This method is usually the way to go in static languages. It kind of forces you to explicitly declare dependencies for your module and even better, define them as interfaces so you can inject a mock in your tests. Here is an example in Go:
+
+```golang
+type HttpClient interface {
+    Do(http.Request) (http.Response, error)
+}
+
+type MyAPIClient {
+    client HttpClient
+}
+
+// in my production code:
+
+apiClient := MyApiClient{&http.Client{}}
+
+// in my tests
+
+apiClient := MyApiClient{&mockClient{}}
+```
+
+This is great because, as you see, Dependency Inversion is enforced by design and I would say it helps with Interface Segregation as well since you don't want to keep your interfaces simple enough to not have to write mocking logic for unused methods.
+
+For this method I heard people argue against changing your code just for tests. My argument has always been that the code changes are benefic for refactoring as well.
+
+Dependency injection still couples your tests to the code but I think it's less than monkey patching and you can get through some refactoring tasks without touching the tests. Also, the fact that you have to explicitly declare these dependencies makes people more mindful about what should be mocked.
+
+The bad news about dependency injection is the extra work you have to put into writing the tests and the mocks. This is usually avoided by using tools to automate it. In Go I am very happy with how [mockery](https://github.com/vektra/mockery) does this job.
+
+## Service Fakes
+
+This patching is a whole new level. With Service Fakes the mocks sits outside your code and it's actually a fake service deployed in your testing infrastructure. The tests and logic code don't have to know it's a fake service they do behave as it's the real thing which keeps the logic completely decoupled. In fact if you keep the tests at API level calls you can even change the language you are using and, as long as the business logic is the same, the tests should still pass.
+
+The downside of this approach is that it can not not enforce any coding practice. You can write spagetti code and things will still work but if you have the maturity of writing clean code these are great.
+
+Of course, it will take more time to write, manage and deploy these fake services and it's even harder to keep them in sync with the actual service so this adds up the price of decoupling. [Pact](https://docs.pact.io/) is a great tool to make it easier but it covers only http communication.
+
+## Conclusion
+
+As always, there is no right or or wrong method of mocking and I have probably missed some of them. I think the teams should really evaluate all of them and pick the one that best suites them as people and the project but always take into consideration the downsides and try to work on reducing them.
