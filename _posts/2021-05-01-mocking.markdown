@@ -5,7 +5,7 @@ date:   2021-05-01 10:50:00 +0200
 categories:
 ---
 
-Testing is probably the most important part of the project and more often than not it takes more time to test a software component than to write it (mostly because you have to fix the bugs). I recently change jobs from a company with a strong testing culture to another one with arguably stronger testing culture but with different strategy when it comes to writing, running and maintaining tests. This made think a bit about testing in general and, since this is already well covered in the literature, I thought about sharing my thoughts on types of **mocking** which is crucial in a world dominated by microservices. So here it comes.
+Testing is probably the most important part of the project and more often than not it takes more time to test a software component than to write it (mostly because you have to fix the bugs). I recently change jobs from a company with a strong testing culture to another one with arguably stronger testing culture but with different strategy when it comes to writing, running and maintaining tests. This made me think a bit about testing in general and, since this is already well covered in the literature, I thought about sharing my thoughts on types of **mocking** which is crucial in a world dominated by microservices. So here it comes.
 
 ## Monkey patching
 
