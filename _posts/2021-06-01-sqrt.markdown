@@ -1,0 +1,181 @@
+---
+layout: post
+title:  "Things We Take For Granted Part 1 - Sqrt"
+date:   2021-06-01 09:50:00 +0200
+categories:
+---
+
+
+There are a few things we take for granted in the software engineering and I would say the champions are standard library functions.
+This is a good thing because we don't have to fight the complexity of manipulating bits, coming up with implementations for simple
+mathematical functions and such that but I think it's worth giving them some attention from time to time to pay some respect if not
+understanding and improving them. This post is the first of a series of inspecting some of the things we take for granted and the star
+is __sqrt__.
+
+## Mathematical Definition
+
+The mathematical definition of sqrt is quite simple - the square root of a number *x* is a number *y* such as *y * y = x*. You can
+see that based on this definition both *2* and *-2* are square roots of *4*. The definition extends a bit and calls the nonnegative
+square root the __principal square root__.
+
+While doing a bit of research for this article I found out that sqrt is surprisingly old - Babylonians mentioned sqrt(2) sometime
+between 1800 - 1600 BC and Egyptians were computing square roots around 1650 BC. It's clear that we had a lot of time to figure
+out efficient methods to extract sqrt and then automate them.
+
+## Algorithms
+
+There are quite a few algorithms which can be implemented in software, all of them with tradeoffs.
+
+### Babylonian Method
+
+This is an iterative method at least 2000 years old and it's based on the arithmetic and geometric means inequality but very
+easy to explain. In a few words we start with an approximation *x* and we refine it following the next algorithm:
+
+```golang
+// sqrt(y) = x
+x := 1.0 // can be a random value
+precision := 0.0001 // configurable
+for math.Abs(x*x-y) > precision {
+    x = (x + y/x) / 2
+}
+```
+
+The main idea behind the algorithm is that if *x* is an underestimate of the square root then *y/x* is an overestimate and their
+average will be closer to the square root. It works the same way if y is an overestimate of the square root. This is a pretty
+easy and neat implementation of the sqrt. Let's see how it compares to the standard lib implementation for Go. I wrote a quick
+benchmark for this:
+
+```golang
+func BenchmarkSqrt(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		math.Sqrt(121)
+	}
+}
+
+func BenchmarkBabylon(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		babylon(121)
+	}
+}
+```
+
+The results are:
+
+```
+goos: darwin
+goarch: amd64
+cpu: Intel(R) Core(TM) i5-5257U CPU @ 2.70GHz
+BenchmarkSqrt-4      	1000000000	         0.367 ns/op
+BenchmarkBabylon-4   	41146826	        31.5 ns/op
+```
+
+Hmm, not great. Our method is quite slow and even more annoying is the fact that standard lib sqrt function has even better precision.
+
+### Golang Standard Library Implementation
+
+I'm basing my research on Go 1.16.4 and the sqrt implementation can be found [here](https://github.com/golang/go/blob/go1.16.4/src/math/sqrt.go).
+The first interesting thing is that sqrt can be executed by the hardware. Could this make the difference in our case? I copy pasted the `sqrt`
+implementation without trying to understand it and ran the benchmark again:
+
+```golang
+import (
+	"math"
+)
+
+const (
+	mask     = 0x7FF
+	shift    = 64 - 11 - 1
+	bias     = 1023
+)
+
+func sqrt(x float64) float64 {
+	// special cases
+	switch {
+	case x == 0 || math.IsNaN(x) || math.IsInf(x, 1):
+		return x
+	case x < 0:
+		return math.NaN()
+	}
+	ix := math.Float64bits(x)
+	// normalize x
+	exp := int((ix >> shift) & mask)
+	if exp == 0 { // subnormal x
+		for ix&(1<<shift) == 0 {
+			ix <<= 1
+			exp--
+		}
+		exp++
+	}
+	exp -= bias // unbias exponent
+	ix &^= mask << shift
+	ix |= 1 << shift
+	if exp&1 == 1 { // odd exp, double x to make it even
+		ix <<= 1
+	}
+	exp >>= 1 // exp = exp/2, exponent of square root
+	// generate sqrt(x) bit by bit
+	ix <<= 1
+	var q, s uint64               // q = sqrt(x)
+	r := uint64(1 << (shift + 1)) // r = moving bit from MSB to LSB
+	for r != 0 {
+		t := s + r
+		if t <= ix {
+			s = t + r
+			ix -= t
+			q += r
+		}
+		ix <<= 1
+		r >>= 1
+	}
+	// final rounding
+	if ix != 0 { // remainder, result not exact
+		q += q & 1 // round according to extra bit
+	}
+	ix = q>>1 + uint64(exp-1+bias)<<shift // significand + biased exponent
+	return math.Float64frombits(ix)
+}
+```
+
+The results are:
+
+```
+goos: darwin
+goarch: amd64
+cpu: Intel(R) Core(TM) i5-5257U CPU @ 2.70GHz
+BenchmarkSqrt-4      	17525127	        61.66 ns/op
+BenchmarkBabylon-4   	37037316	        28.70 ns/op
+```
+
+Yep, we can confirm our algorithm is faster than the actual standard lib implementation when it does not use the
+hardware implementation. Why is this? Where is the tradeoff? Let's see.
+
+#### Bit By Bit Method
+
+We know that Babylonians (and actually Heron) can beat the current algorithm but we do trade off precision. The
+standard library implementation does not depend on a precision factor and it does return exact values for perfect
+squares and good approximations for the other numbers.
+
+The implementation is based on the [digit-by-digit calculation](https://en.wikipedia.org/wiki/Methods_of_computing_square_roots)
+where each digit in the square root is computed. This method is indeed slower than the Babylonian method but it works for any
+base and it can be used to check if a number is a perfect square safely. These properties are important enough to make it worth
+the extra time.
+
+The algorithm is a bit too complicated (at least for me) to cover in this blog post but the basic idea behind it is:
+at each step we add a digit to the square root such as if we square the value it is less than our number, but if we
+increment the digit the squared value will be greater than our number. This guarantees us that the digit is correct.
+A very nice practical example is explained [here](https://math.stackexchange.com/questions/512358/calculating-a-sqrt-digit-by-digit).
+
+Now, we see that the standard lib implementation has a lot of bit operations. Why is that? Remember how this algorithm works with
+any base? We know that computers work well in binary and that binary operations are usually faster. Well, the standard lib
+implementation is computing the sqrt value one bit at a time. This solution is called __bit by bit__ and it covers the same
+principles.
+
+The thing that baffled me a bit in this implementation was the bias operation. We need to [unbias the exponent](https://en.wikipedia.org/wiki/Exponent_bias)
+to correctly evaluate the floating point number. This is due to the fact that exponents are signed, but storing it as a two complement would make
+number comparisons complicated. For simplicity, the exponent is stored as an unsigned int and it's converted to actual values by subtracting the bias.
+The `1023` value is constant for double precision.
+
+## Hardware Implementation
+
+As can be seen [here](https://software.intel.com/content/www/us/en/develop/documentation/onemkl-vmperfdata/top/real-functions/root/sqrt.html) CPUs now offer
+square root computation but I will leave this for a future article.
